@@ -21,7 +21,7 @@ else
 	# Using separate stack-work directories to avoid recompiling when
 	# changing between debug and non-debug builds, per
 	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
-	PROF := --profile --work-dir .stack-work-prof
+	PROF := --trace --work-dir .stack-work-prof
 
 	dex     := $(STACK) exec         dex --
 	dexprof := $(STACK) exec $(PROF) dex --
@@ -75,7 +75,7 @@ install: dexrt-llvm
 	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
 build-prof: dexrt-llvm
-	$(STACK) build $(PROF)
+	$(STACK) build $(PROF) --flag dex:-foreign
 
 # For some reason stack fails to detect modifications to foreign library files
 build-python: dexrt-llvm
@@ -99,14 +99,15 @@ dexrt-llvm: src/lib/dexrt.bc
 example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
-                isomorphisms ode-integrator linear_algebra fluidsim \
+                isomorphisms ode-integrator fluidsim \
                 sgd chol fft tutorial vega-plotting kernelregression \
                 quaternions
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
-             record-variant-tests typeclass-tests complex-tests trig-tests
+             record-variant-tests typeclass-tests complex-tests trig-tests \
+             linalg-tests
 
 lib-names = diagram plot png
 

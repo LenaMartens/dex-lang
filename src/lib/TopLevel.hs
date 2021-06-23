@@ -11,6 +11,7 @@
 module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
                  initTopEnv, EvalConfig (..), TopEnv (..)) where
 
+import Control.Exception (throwIO)
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -44,6 +45,8 @@ import Util (highlightRegion, measureSeconds)
 import Optimize
 import Parallelize
 
+import SaferNames.Bridge
+
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , libPath     :: Maybe FilePath
@@ -62,6 +65,10 @@ data TopEnv = TopEnv
     deriving Generic
 
 data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
+
+runTopPassM :: Bool -> EvalConfig -> TopPassM a -> IO (Except a, [Output])
+runTopPassM bench opts m = runLogger (logFile opts) \logger ->
+  runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
 
 initTopEnv :: TopEnv
 initTopEnv = TopEnv initBindings mempty
@@ -94,9 +101,16 @@ evalSourceBlock opts env block = do
     Left err   -> return (mempty, Result outs' (Left (addCtx block err)))
     Right env' -> return (env'  , Result outs' (Right ()))
 
-runTopPassM :: Bool -> EvalConfig -> TopPassM a -> IO (Except a, [Output])
-runTopPassM bench opts m = runLogger (logFile opts) \logger ->
-  runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
+evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
+evalSourceBlocks = catFoldM (\env sb -> withCtx sb $ evalSourceBlockM env sb)
+  where
+    withCtx :: SourceBlock -> TopPassM a -> TopPassM a
+    withCtx sb m = do
+      topPassEnv <- ask
+      maybeResult <- runExceptT $ catchIOExcept $ runReaderT m topPassEnv
+      case maybeResult of
+        Left  err -> liftIO $ throwIO $ addCtx sb err
+        Right ans -> return ans
 
 evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
 evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
@@ -136,8 +150,8 @@ evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
         fullPath <- findModulePath moduleName
         source <- liftIO $ readFile fullPath
         newTopEnv <- evalSourceBlocks
-                       (env <> moduleStatus moduleName CurrentlyImporting) $
-                       parseProg source
+                       (env <> moduleStatus moduleName CurrentlyImporting)
+                       (parseProg source)
         return $ newTopEnv <> moduleStatus moduleName FullyImported
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
@@ -177,9 +191,6 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
-evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
-evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
-
 evalUModuleVal :: Bindings -> Name -> UModule -> TopPassM Val
 evalUModuleVal env v m = do
   env' <- evalUModule env m
@@ -196,8 +207,11 @@ evalUModule :: Bindings -> UModule -> TopPassM Bindings
 evalUModule env untyped = do
   logPass Parse untyped
   typed <- liftEitherIO $ inferModule env untyped
-  checkPass TypePass typed
-  synthed <- liftEitherIO $ synthModule env typed
+  -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
+  -- safer names system while we're staging it in.
+  let typed' = roundtripSaferNamesPass typed
+  checkPass TypePass typed'
+  synthed <- liftEitherIO $ synthModule env typed'
   -- TODO: check that the type of module exports doesn't change from here on
   checkPass SynthPass synthed
   let defunctionalized = simplifyModule env synthed
@@ -218,6 +232,10 @@ evalUModule env untyped = do
       newBindings <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
       checkPass ResultPass $ Module Evaluated Empty newBindings
       return newBindings
+
+roundtripSaferNamesPass :: Module -> Module
+roundtripSaferNamesPass (Module ir decls bindings) = Module ir decls' bindings
+  where decls' = fromSafeB $ toSafeB decls
 
 evalBackend :: Bindings -> Block -> TopPassM Atom
 evalBackend env block = do
