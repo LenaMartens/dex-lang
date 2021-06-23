@@ -17,6 +17,7 @@ import Data.Aeson hiding (Result, Null, Value)
 import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
+import GHC.Word
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -140,6 +141,12 @@ printFloat :: Float -> Doc ann
 printFloat x = p $ reverse $ dropWhile (=='0') $ reverse $
   showFFloat (Just 6) x ""
 
+printWord32 :: Word32 -> Doc ann
+printWord32 x = p $ ("0x" ++ showHex x "")
+
+printWord64 :: Word64 -> Doc ann
+printWord64 x = p $ ("0x" ++ showHex x "")
+
 instance Pretty LitVal where pretty = prettyFromPrettyPrec
 instance PrettyPrec LitVal where
   prettyPrec (Int64Lit   x) = atPrec ArgPrec $ p x
@@ -147,8 +154,8 @@ instance PrettyPrec LitVal where
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ printFloat  x
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
-  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
-  prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
+  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ printWord32 x
+  prettyPrec (Word64Lit  x) = atPrec ArgPrec $ printWord64 x
   prettyPrec (PtrLit ty x) = atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
